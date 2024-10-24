@@ -557,51 +557,61 @@
 }
 
 - (void)fetchFullSizeImageFile:(PHAsset *)asset resultHandler:(ResultHandler *)handler progressHandler:(PMProgressHandler *)progressHandler {
-  PHImageManager *manager = PHImageManager.defaultManager;
-  PHImageRequestOptions *options = [PHImageRequestOptions new];
-  options.synchronous = YES;
-  options.version = PHImageRequestOptionsVersionCurrent;
+    PHImageManager *manager = PHImageManager.defaultManager;
+    PHImageRequestOptions *options = [PHImageRequestOptions new];
 
+    // Set asynchronous to avoid blocking the main thread
+    options.synchronous = NO;
+    options.version = PHImageRequestOptionsVersionCurrent;
 
-  [options setNetworkAccessAllowed:YES];
-  [self notifyProgress:progressHandler progress:0 state:PMProgressStatePrepare];
-  [options setProgressHandler:^(double progress, NSError *error, BOOL *stop,
-      NSDictionary *info) {
-    if (progress == 1.0) {
-      [self fetchFullSizeImageFile:asset resultHandler:handler progressHandler:nil];
-    }
+    [options setNetworkAccessAllowed:YES]; // Allow network access for iCloud assets
 
-    if (error) {
-      [self notifyProgress:progressHandler progress:progress state:PMProgressStateFailed];
-      [progressHandler deinit];
-      return;
-    }
-    if (progress != 1) {
-      [self notifyProgress:progressHandler progress:progress state:PMProgressStateLoading];
-    }
-  }];
+    // Notify progress start
+    [self notifyProgress:progressHandler progress:0 state:PMProgressStatePrepare];
 
-  [manager requestImageForAsset:asset
-                     targetSize:PHImageManagerMaximumSize
-                    contentMode:PHImageContentModeDefault
-                        options:options
-                  resultHandler:^(UIImage *_Nullable image,
-                      NSDictionary *_Nullable info) {
+    // Handle progress updates
+    [options setProgressHandler:^(double progress, NSError *error, BOOL *stop, NSDictionary *info) {
+        if (error) {
+            [self notifyProgress:progressHandler progress:progress state:PMProgressStateFailed];
+            [progressHandler deinit]; // De-initialize the progress handler on failure
+            return;
+        }
 
-                    BOOL downloadFinished = [PMManager isDownloadFinish:info];
-                    if (!downloadFinished) {
-                      return;
-                    }
+        // Notify loading progress
+        [self notifyProgress:progressHandler progress:progress state:PMProgressStateLoading];
 
-                    if ([handler isReplied]) {
-                      return;
-                    }
+        if (progress == 1.0) {
+            // When download completes, do not recurse. The result handler will be called separately.
+            [self notifyProgress:progressHandler progress:progress state:nil];
+        }
+    }];
 
-                    NSString *path = [self writeFullFileWithAssetId:asset imageData:UIImageJPEGRepresentation(image, 1.0)];
+    // Request the full-size image asynchronously
+    [manager requestImageForAsset:asset
+               targetSize:PHImageManagerMaximumSize
+              contentMode:PHImageContentModeDefault
+                  options:options
+            resultHandler:^(UIImage *_Nullable image, NSDictionary *_Nullable info) {
 
-                    [handler reply:path];
-                    [self notifySuccess:progressHandler];
-                  }];
+                // Check if the image download is finished
+                BOOL downloadFinished = [PMManager isDownloadFinish:info];
+                if (!downloadFinished) {
+                    return;
+                }
+
+                if ([handler isReplied]) {
+                    return;
+                }
+
+                // Convert image to JPEG and save it to a file
+                NSString *path = [self writeFullFileWithAssetId:asset imageData:UIImageJPEGRepresentation(image, 1.0)];
+
+                // Pass the file path to the result handler
+                [handler reply:path];
+
+                // Notify success
+                [self notifySuccess:progressHandler];
+            }];
 }
 
 - (NSString *)writeFullFileWithAssetId:(PHAsset *)asset imageData:(NSData *)imageData {
