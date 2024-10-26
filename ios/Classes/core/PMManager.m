@@ -336,57 +336,70 @@
 }
 
 - (void)fetchThumb:(PHAsset *)asset option:(PMThumbLoadOption *)option resultHandler:(ResultHandler *)handler progressHandler:(PMProgressHandler *)progressHandler {
-  PHImageManager *manager = PHImageManager.defaultManager;
-  PHImageRequestOptions *requestOptions = [PHImageRequestOptions new];
-  requestOptions.deliveryMode = option.deliveryMode;
-  requestOptions.resizeMode = option.resizeMode;
+    PHImageManager *manager = PHImageManager.defaultManager;
+    PHImageRequestOptions *requestOptions = [PHImageRequestOptions new];
 
-  [self notifyProgress:progressHandler progress:0 state:PMProgressStatePrepare];
+    requestOptions.deliveryMode = option.deliveryMode;
+    requestOptions.resizeMode = option.resizeMode;
+    [requestOptions setNetworkAccessAllowed:YES]; // Allow fetching from iCloud if needed
 
-  [requestOptions setNetworkAccessAllowed:YES];
-  [requestOptions setProgressHandler:^(double progress, NSError *error, BOOL *stop,
-      NSDictionary *info) {
-    if (progress == 1.0) {
-      [self fetchThumb:asset option:option resultHandler:handler progressHandler:nil];
-    }
+    // Notify the progress preparation state
+    [self notifyProgress:progressHandler progress:0 state:PMProgressStatePrepare];
 
-    if (error) {
-      [self notifyProgress:progressHandler progress:progress state:PMProgressStateFailed];
-      [progressHandler deinit];
-      return;
-    }
-    if (progress != 1) {
-      [self notifyProgress:progressHandler progress:progress state:PMProgressStateLoading];
-    }
-  }];
-  int width = option.width;
-  int height = option.height;
-  [manager requestImageForAsset:asset
-                     targetSize:CGSizeMake(width, height)
-                    contentMode:option.contentMode
-                        options:requestOptions
-                  resultHandler:^(UIImage *result, NSDictionary *info) {
-                    BOOL downloadFinished = [PMManager isDownloadFinish:info];
+    // Handle progress updates
+    [requestOptions setProgressHandler:^(double progress, NSError *error, BOOL *stop, NSDictionary *info) {
+        if (error) {
+            // Handle error and notify failure
+            [self notifyProgress:progressHandler progress:progress state:PMProgressStateFailed];
+            [progressHandler deinit]; // De-initialize progress handler on error
+            return;
+        }
 
-                    if (!downloadFinished) {
-                      return;
-                    }
+        // Notify progress during loading
+        [self notifyProgress:progressHandler progress:progress state:PMProgressStateLoading];
 
-                    if ([handler isReplied]) {
-                      return;
-                    }
-                    NSData *imageData;
-                    if (option.format == PMThumbFormatTypePNG) {
-                      imageData = UIImagePNGRepresentation(result);
-                    } else {
-                      imageData = UIImageJPEGRepresentation(result, option.quality);
-                    }
+        if (progress == 1.0) {
+            // When the download is complete, no need to recurse; completion is handled in the result handler.
+            [self notifyProgress:progressHandler progress:progress state:nil];
+        }
+    }];
 
-                    FlutterStandardTypedData *data = [FlutterStandardTypedData typedDataWithBytes:imageData];
-                    [handler reply:data];
+    // Get thumbnail size
+    int width = option.width;
+    int height = option.height;
 
-                    [self notifySuccess:progressHandler];
-                  }];
+    // Request the thumbnail image
+    [manager requestImageForAsset:asset
+                       targetSize:CGSizeMake(width, height)
+                      contentMode:option.contentMode
+                          options:requestOptions
+                    resultHandler:^(UIImage *result, NSDictionary *info) {
+
+                        // Check if the image download is finished
+                        BOOL downloadFinished = [PMManager isDownloadFinish:info];
+                        if (!downloadFinished) {
+                            return; // If download isn't finished, exit early
+                        }
+
+                        if ([handler isReplied]) {
+                            return; // If the handler has already replied, no need to process further
+                        }
+
+                        // Convert the result image to the desired format (JPEG or PNG)
+                        NSData *imageData;
+                        if (option.format == PMThumbFormatTypePNG) {
+                            imageData = UIImagePNGRepresentation(result); // Convert to PNG
+                        } else {
+                            imageData = UIImageJPEGRepresentation(result, option.quality); // Convert to JPEG with quality
+                        }
+
+                        // Send the image data back through the result handler
+                        FlutterStandardTypedData *data = [FlutterStandardTypedData typedDataWithBytes:imageData];
+                        [handler reply:data];
+
+                        // Notify success
+                        [self notifySuccess:progressHandler];
+                    }];
 }
 
 - (void)getFullSizeFileWithId:(NSString *)id isOrigin:(BOOL)isOrigin resultHandler:(ResultHandler *)handler progressHandler:(PMProgressHandler *)progressHandler {
