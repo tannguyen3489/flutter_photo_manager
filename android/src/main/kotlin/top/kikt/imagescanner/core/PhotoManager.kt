@@ -106,7 +106,7 @@ class PhotoManager(private val context: Context) {
     }
   }
 
-  fun getOriginBytes(id: String, cacheOriginBytes: Boolean, haveLocationPermission: Boolean, resultHandler: ResultHandler) {
+  fun getOriginBytes(id: String, cacheOriginBytes: Boolean?, haveLocationPermission: Boolean, resultHandler: ResultHandler) {
     val asset = dbUtils.getAssetEntity(context, id)
 
     if (asset == null) {
@@ -120,7 +120,7 @@ class PhotoManager(private val context: Context) {
       } else {
         val byteArray = dbUtils.getOriginBytes(context, asset, haveLocationPermission)
         resultHandler.reply(byteArray)
-        if (cacheOriginBytes) {
+        if (cacheOriginBytes != null && cacheOriginBytes) {
           dbUtils.cacheOriginFile(context, asset, byteArray)
         }
       }
